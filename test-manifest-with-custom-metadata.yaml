@@ -1,0 +1,19 @@
+labels:
+  app: estafette-ci-builder
+  team: estafette-team
+  language: golang
+
+metadata:
+  dependencies:
+  - name: mydependency
+    host: mydependency.estafette.io
+    protocol: http
+
+# automatically executed stages on a push to the repository
+stages:
+  build:
+    image: golang:1.8.0-alpine
+    workDir: /go/src/github.com/estafette/estafette-ci-builder
+    commands:
+    - go test -v ./...
+    - CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ./publish/estafette-ci-builder .

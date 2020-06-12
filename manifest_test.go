@@ -594,28 +594,6 @@ stages:
 	})
 }
 
-func TestManifestToJsonMarshalling(t *testing.T) {
-
-	t.Run("ReturnsStagesAsStages", func(t *testing.T) {
-
-		manifest := EstafetteManifest{
-			Stages: []*EstafetteStage{
-				&EstafetteStage{
-					Name: "build",
-				},
-			},
-		}
-
-		// act
-		data, err := json.Marshal(manifest)
-
-		if assert.Nil(t, err) {
-			assert.False(t, strings.Contains(string(data), "Pipelines"))
-			assert.True(t, strings.Contains(string(data), "\"Stages\""))
-		}
-	})
-}
-
 func TestManifestToYamlMarshalling(t *testing.T) {
 	t.Run("UnmarshallingThenMarshallingReturnsTheSameFile", func(t *testing.T) {
 
@@ -747,6 +725,25 @@ releases:
 
 func TestManifestToJSONMarshalling(t *testing.T) {
 
+	t.Run("ReturnsStagesAsStages", func(t *testing.T) {
+
+		manifest := EstafetteManifest{
+			Stages: []*EstafetteStage{
+				&EstafetteStage{
+					Name: "build",
+				},
+			},
+		}
+
+		// act
+		data, err := json.Marshal(manifest)
+
+		if assert.Nil(t, err) {
+			assert.False(t, strings.Contains(string(data), "Pipelines"))
+			assert.True(t, strings.Contains(string(data), "\"Stages\""))
+		}
+	})
+
 	t.Run("UnmarshallingYamlThenMarshalToJSONForNestedCustomProperties", func(t *testing.T) {
 
 		var manifest EstafetteManifest
@@ -793,7 +790,7 @@ stages:
 		output, err := json.Marshal(manifest)
 
 		if assert.Nil(t, err) {
-			assert.Equal(t, "{\"Archived\":false,\"Builder\":{\"Track\":\"stable\",\"OperatingSystem\":\"windows\"},\"Labels\":{\"app\":\"estafette-ci-builder\",\"language\":\"golang\",\"team\":\"estafette-team\"},\"Version\":{\"SemVer\":{\"Major\":0,\"Minor\":0,\"Patch\":\"{{auto}}\",\"LabelTemplate\":\"{{branch}}\",\"ReleaseBranch\":\"master\"},\"Custom\":null},\"GlobalEnvVars\":null,\"Triggers\":null,\"Stages\":[{\"Name\":\"test-alpha-version\",\"ContainerImage\":\"extensions/gke:${ESTAFETTE_BUILD_VERSION}\",\"Shell\":\"powershell\",\"WorkingDirectory\":\"C:/estafette-work\",\"Commands\":null,\"RunCommandsInForeground\":false,\"When\":\"status == 'succeeded'\",\"EnvVars\":null,\"AutoInjected\":false,\"Retries\":1,\"ParallelStages\":null,\"Services\":null,\"CustomProperties\":{\"app\":\"gke\",\"container\":{\"name\":\"gke\",\"repository\":\"extensions\",\"tag\":\"alpha\"},\"cpu\":{\"limit\":\"100m\",\"request\":\"100m\"},\"credentials\":\"gke-tooling\",\"dryrun\":true,\"memory\":{\"limit\":\"256Mi\",\"request\":\"256Mi\"},\"namespace\":\"estafette\",\"visibility\":\"private\"}}],\"Releases\":null}", string(output))
+			assert.Equal(t, "{\"Archived\":false,\"Builder\":{\"Track\":\"stable\",\"OperatingSystem\":\"windows\"},\"Labels\":{\"app\":\"estafette-ci-builder\",\"language\":\"golang\",\"team\":\"estafette-team\"},\"Version\":{\"SemVer\":{\"Major\":0,\"Minor\":0,\"Patch\":\"{{auto}}\",\"LabelTemplate\":\"{{branch}}\",\"ReleaseBranch\":\"master\"},\"Custom\":null},\"GlobalEnvVars\":null,\"Metadata\":{},\"Triggers\":null,\"Stages\":[{\"Name\":\"test-alpha-version\",\"ContainerImage\":\"extensions/gke:${ESTAFETTE_BUILD_VERSION}\",\"Shell\":\"powershell\",\"WorkingDirectory\":\"C:/estafette-work\",\"Commands\":null,\"RunCommandsInForeground\":false,\"When\":\"status == 'succeeded'\",\"EnvVars\":null,\"AutoInjected\":false,\"Retries\":1,\"ParallelStages\":null,\"Services\":null,\"CustomProperties\":{\"app\":\"gke\",\"container\":{\"name\":\"gke\",\"repository\":\"extensions\",\"tag\":\"alpha\"},\"cpu\":{\"limit\":\"100m\",\"request\":\"100m\"},\"credentials\":\"gke-tooling\",\"dryrun\":true,\"memory\":{\"limit\":\"256Mi\",\"request\":\"256Mi\"},\"namespace\":\"estafette\",\"visibility\":\"private\"}}],\"Releases\":null}", string(output))
 		}
 	})
 }
@@ -1037,6 +1034,61 @@ func TestValidate(t *testing.T) {
 
 		// act
 		err := manifest.Validate(*GetDefaultManifestPreferences())
+
+		assert.Nil(t, err)
+	})
+
+	t.Run("ReturnsErrorIfMetadataDoesNotMatchMetadataValidationSchema", func(t *testing.T) {
+
+		preferences := GetDefaultManifestPreferences()
+		preferences.MetadataValidationSchema = `{"type": "string"}`
+
+		manifest, err := ReadManifestFromFile(preferences, "test-manifest-with-custom-metadata.yaml", false)
+		assert.Nil(t, err)
+
+		// act
+		err = manifest.Validate(*preferences)
+
+		assert.NotNil(t, err)
+	})
+
+	t.Run("ReturnNoErrorIfMetadataMatchesMetadataValidationSchema", func(t *testing.T) {
+
+		preferences := GetDefaultManifestPreferences()
+		preferences.MetadataValidationSchema = `
+{
+	"type": "object",
+	"properties": {
+		"dependencies": { 
+			"type": "array",
+			"items": {
+				"type": "object",
+				"properties": {
+					"name": { "type": "string" },
+					"host": { "type": "string" },
+					"protocol": { "type": "string" }
+				},
+				"required": ["name"]
+			}
+		}
+	}
+}`
+
+		// dependencies:
+		// - name: mydependency
+		// 	host: mydependency.estafette.io
+		// 	protocol: http
+
+		manifest, err := ReadManifestFromFile(preferences, "test-manifest-with-custom-metadata.yaml", false)
+		assert.Nil(t, err)
+
+		metadataBytes, err := json.Marshal(manifest.Metadata)
+		assert.Nil(t, err)
+
+		assert.Equal(t, "{\"dependencies\":[{\"host\":\"mydependency.estafette.io\",\"name\":\"mydependency\",\"protocol\":\"http\"}]}", string(metadataBytes))
+
+		// act
+		err = manifest.Validate(*preferences)
 
 		assert.Nil(t, err)
 	})

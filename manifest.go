@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -9,34 +10,37 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/xeipuuv/gojsonschema"
 	yaml "gopkg.in/yaml.v2"
 )
 
 // EstafetteManifest is the object that the .estafette.yaml deserializes to
 type EstafetteManifest struct {
-	Archived      bool                `yaml:"archived,omitempty"`
-	Builder       EstafetteBuilder    `yaml:"builder,omitempty"`
-	Labels        map[string]string   `yaml:"labels,omitempty"`
-	Version       EstafetteVersion    `yaml:"version,omitempty"`
-	GlobalEnvVars map[string]string   `yaml:"env,omitempty"`
-	Triggers      []*EstafetteTrigger `yaml:"triggers,omitempty"`
-	Stages        []*EstafetteStage   `yaml:"-"`
-	Releases      []*EstafetteRelease `yaml:"-"`
+	Archived      bool                   `yaml:"archived,omitempty"`
+	Builder       EstafetteBuilder       `yaml:"builder,omitempty"`
+	Labels        map[string]string      `yaml:"labels,omitempty"`
+	Version       EstafetteVersion       `yaml:"version,omitempty"`
+	GlobalEnvVars map[string]string      `yaml:"env,omitempty"`
+	Metadata      map[string]interface{} `yaml:"metadata,omitempty"`
+	Triggers      []*EstafetteTrigger    `yaml:"triggers,omitempty"`
+	Stages        []*EstafetteStage      `yaml:"-"`
+	Releases      []*EstafetteRelease    `yaml:"-"`
 }
 
 // UnmarshalYAML customizes unmarshalling an EstafetteManifest
 func (c *EstafetteManifest) UnmarshalYAML(unmarshal func(interface{}) error) (err error) {
 
 	var aux struct {
-		Archived            bool                `yaml:"archived"`
-		Builder             EstafetteBuilder    `yaml:"builder"`
-		Labels              map[string]string   `yaml:"labels"`
-		Version             EstafetteVersion    `yaml:"version"`
-		GlobalEnvVars       map[string]string   `yaml:"env"`
-		DeprecatedPipelines yaml.MapSlice       `yaml:"pipelines"`
-		Triggers            []*EstafetteTrigger `yaml:"triggers"`
-		Stages              yaml.MapSlice       `yaml:"stages"`
-		Releases            yaml.MapSlice       `yaml:"releases"`
+		Archived            bool                   `yaml:"archived"`
+		Builder             EstafetteBuilder       `yaml:"builder"`
+		Labels              map[string]string      `yaml:"labels"`
+		Version             EstafetteVersion       `yaml:"version"`
+		GlobalEnvVars       map[string]string      `yaml:"env"`
+		Metadata            map[string]interface{} `yaml:"metadata"`
+		DeprecatedPipelines yaml.MapSlice          `yaml:"pipelines"`
+		Triggers            []*EstafetteTrigger    `yaml:"triggers"`
+		Stages              yaml.MapSlice          `yaml:"stages"`
+		Releases            yaml.MapSlice          `yaml:"releases"`
 	}
 
 	// unmarshal to auxiliary type
@@ -50,6 +54,7 @@ func (c *EstafetteManifest) UnmarshalYAML(unmarshal func(interface{}) error) (er
 	c.Version = aux.Version
 	c.Labels = aux.Labels
 	c.GlobalEnvVars = aux.GlobalEnvVars
+	c.Metadata = cleanUpStringMap(aux.Metadata)
 	c.Triggers = aux.Triggers
 
 	// provide backwards compatibility for the deprecated pipelines section now renamed to stages
@@ -101,14 +106,15 @@ func (c *EstafetteManifest) UnmarshalYAML(unmarshal func(interface{}) error) (er
 // MarshalYAML customizes marshalling an EstafetteManifest
 func (c EstafetteManifest) MarshalYAML() (out interface{}, err error) {
 	var aux struct {
-		Archived      bool                `yaml:"archived,omitempty"`
-		Builder       EstafetteBuilder    `yaml:"builder,omitempty"`
-		Labels        map[string]string   `yaml:"labels,omitempty"`
-		Version       EstafetteVersion    `yaml:"version,omitempty"`
-		GlobalEnvVars map[string]string   `yaml:"env,omitempty"`
-		Triggers      []*EstafetteTrigger `yaml:"triggers,omitempty"`
-		Stages        yaml.MapSlice       `yaml:"stages,omitempty"`
-		Releases      yaml.MapSlice       `yaml:"releases,omitempty"`
+		Archived      bool                   `yaml:"archived,omitempty"`
+		Builder       EstafetteBuilder       `yaml:"builder,omitempty"`
+		Labels        map[string]string      `yaml:"labels,omitempty"`
+		Version       EstafetteVersion       `yaml:"version,omitempty"`
+		GlobalEnvVars map[string]string      `yaml:"env,omitempty"`
+		Metadata      map[string]interface{} `yaml:"metadata,omitempty"`
+		Triggers      []*EstafetteTrigger    `yaml:"triggers,omitempty"`
+		Stages        yaml.MapSlice          `yaml:"stages,omitempty"`
+		Releases      yaml.MapSlice          `yaml:"releases,omitempty"`
 	}
 
 	aux.Archived = c.Archived
@@ -117,6 +123,7 @@ func (c EstafetteManifest) MarshalYAML() (out interface{}, err error) {
 	aux.Version = c.Version
 	aux.GlobalEnvVars = c.GlobalEnvVars
 	aux.Triggers = c.Triggers
+	aux.Metadata = c.Metadata
 
 	for _, stage := range c.Stages {
 		aux.Stages = append(aux.Stages, yaml.MapItem{
@@ -223,7 +230,25 @@ func (c *EstafetteManifest) Validate(preferences EstafetteManifestPreferences) (
 				return
 			}
 		}
+	}
 
+	if preferences.MetadataValidationSchema != "" {
+		// validate free form metadata section with jsonschema
+		metadataBytes, err := json.Marshal(c.Metadata)
+		if err != nil {
+			return err
+		}
+		documentLoader := gojsonschema.NewStringLoader(string(metadataBytes))
+		schemaLoader := gojsonschema.NewStringLoader(preferences.MetadataValidationSchema)
+
+		result, err := gojsonschema.Validate(schemaLoader, documentLoader)
+		if err != nil {
+			return err
+		}
+
+		if !result.Valid() {
+			return fmt.Errorf("Metadata validation failed: %v", result.Errors())
+		}
 	}
 
 	return nil
